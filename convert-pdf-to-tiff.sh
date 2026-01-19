@@ -69,11 +69,10 @@ INPUT_DIR=$(cd "$INPUT_DIR" && pwd)
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd)
 
-# Find all PDF files
-mapfile -t pdf_files < <(find "$INPUT_DIR" -type f -iname "*.pdf" | sort)
-total=${#pdf_files[@]}
+# Count PDF files first
+total=$(find "$INPUT_DIR" -type f -iname "*.pdf" | wc -l | tr -d ' ')
 
-if [ $total -eq 0 ]; then
+if [ "$total" -eq 0 ]; then
     echo -e "${YELLOW}No PDF files found in $INPUT_DIR${NC}"
     exit 0
 fi
@@ -88,13 +87,16 @@ echo "Format:     8-bit grayscale, LZW, 300 DPI"
 echo "=============================================="
 echo ""
 
-# Convert files
-count=0
-failed=0
-skipped=0
+# Convert files - use temp files for counters (subshell workaround)
+TMPDIR_STATS=$(mktemp -d)
+echo "0" > "$TMPDIR_STATS/count"
+echo "0" > "$TMPDIR_STATS/failed"
+echo "0" > "$TMPDIR_STATS/skipped"
 
-for pdf_file in "${pdf_files[@]}"; do
+find "$INPUT_DIR" -type f -iname "*.pdf" -print0 | sort -z | while IFS= read -r -d '' pdf_file; do
+    count=$(cat "$TMPDIR_STATS/count")
     count=$((count + 1))
+    echo "$count" > "$TMPDIR_STATS/count"
 
     # Get relative path from input directory
     rel_path="${pdf_file#$INPUT_DIR/}"
@@ -111,7 +113,8 @@ for pdf_file in "${pdf_files[@]}"; do
     # Skip if already converted
     if [ -f "$out_file" ]; then
         echo -e "[$count/$total] ${YELLOW}SKIP${NC}: $rel_path (already exists)"
-        skipped=$((skipped + 1))
+        skipped=$(cat "$TMPDIR_STATS/skipped")
+        echo "$((skipped + 1))" > "$TMPDIR_STATS/skipped"
         continue
     fi
 
@@ -127,9 +130,16 @@ for pdf_file in "${pdf_files[@]}"; do
         echo -e "\r[$count/$total] ${GREEN}Done${NC}: ${rel_path:0:70}          "
     else
         echo -e "\r[$count/$total] ${RED}FAILED${NC}: ${rel_path:0:70}          "
-        failed=$((failed + 1))
+        failed=$(cat "$TMPDIR_STATS/failed")
+        echo "$((failed + 1))" > "$TMPDIR_STATS/failed"
     fi
 done
+
+# Read final counts
+count=$(cat "$TMPDIR_STATS/count")
+failed=$(cat "$TMPDIR_STATS/failed")
+skipped=$(cat "$TMPDIR_STATS/skipped")
+rm -rf "$TMPDIR_STATS"
 
 echo ""
 echo "=============================================="
